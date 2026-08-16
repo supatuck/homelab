@@ -1,0 +1,258 @@
+services:
+  # ============================================
+  # VPN Container (for torrent + usenet traffic)
+  # ============================================
+  pia-wireguard:
+    image: thrnz/docker-wireguard-pia:latest
+    container_name: pia-wireguard
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    # Bootstrap DNS so the container can resolve PIA's server list at startup
+    # even before the host resolver is ready (fixes the boot-time
+    # "Could not resolve serverlist.piaservers.net" failure).
+    dns:
+      - 1.1.1.1
+      - 1.0.0.1
+    ports:
+      - "9100:8081"        # qbittorrent web UI (moved off 8080 to free it for sabnzbd)
+      - "6881:6881"        # qbittorrent torrent port (tcp)
+      - "6881:6881/udp"    # qbittorrent torrent port (udp)
+      - "9101:3000"        # flood web UI
+      - "3333:3333"        # bitmagnet web UI + torznab
+      - "3334:3334"        # bitmagnet DHT (tcp)
+      - "3334:3334/udp"    # bitmagnet DHT (udp)
+      - "9700:8085"        # sabnzbd web UI (sabnzbd.ini sets port = 8085)
+    environment:
+      - TZ=${TZ}
+      - USER=${PIA_USERNAME}
+      - PASS=${PIA_PASSWORD}
+      - LOC=${PIA_LOCATION}
+      - LOCAL_NETWORK=192.0.2.0/24
+      - VPNDNS=1.1.1.1,1.0.0.1
+      - PORT_FORWARDING=1
+      - PORT_FILE=/pia-shared/port.dat
+      # Ships in ./pia-wireguard/scripts: pushes PIA's forwarded port into
+      # qbittorrent's listen_port once the API answers.
+      - PORT_SCRIPT=/pia-custom/update-qbt-port.sh
+      # Exit (instead of lingering "unhealthy") on a fatal error such as the
+      # port-forward rebind timeout. With restart:unless-stopped this makes the
+      # container auto-restart onto a fresh PIA server.
+      - EXIT_ON_FATAL=1
+    volumes:
+      - ./pia-wireguard:/pia
+      - ./pia-wireguard/shared:/pia-shared
+      - ./pia-wireguard/scripts:/pia-custom:ro
+    sysctls:
+      - net.ipv4.conf.all.src_valid_mark=1
+    networks:
+      - proxy
+    labels:
+      - "autoheal=true"
+    # A restart of THIS container destroys the network namespace that
+    # qbittorrent/flood/sabnzbd/bitmagnet/bitmagnet-db all share, stranding them.
+    # So a false-positive healthcheck is expensive. The old check was
+    # `ping -c 1 www.google.com`: a single ICMP packet, DNS-dependent, aimed at a
+    # host that rate-limits ICMP -- three of those 30s apart was enough to trigger
+    # ~4 namespace teardowns in 30 days. This uses an IP literal (no DNS) over TCP
+    # and tolerates more loss before declaring the tunnel dead.
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf -m 10 https://1.1.1.1 -o /dev/null || exit 1"]
+      interval: 60s
+      timeout: 15s
+      retries: 5
+
+  # NOTE: qbittorrent web UI internal port moved to 8081 so it cannot
+  # collide with sabnzbd inside the shared VPN namespace (sabnzbd defaults
+  # to 8080 on first boot, then runs on 8085 once sabnzbd.ini is set --
+  # see the first-boot checklist in the README).
+  # External access unchanged: http://192.0.2.10:9100
+  qbittorrent:
+    image: lscr.io/linuxserver/qbittorrent:latest
+    container_name: qbittorrent
+    restart: unless-stopped
+    network_mode: "service:pia-wireguard"
+    depends_on:
+      - pia-wireguard
+    volumes:
+      - ./qbittorrent/config:/config
+      - /mnt/media:/data
+      - ./pia-wireguard/shared:/pia-shared:ro
+    environment:
+      - TZ=${TZ}
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - WEBUI_PORT=8081
+    # qbittorrent shares the VPN namespace, so this doubles as a tunnel check:
+    # if the VPN drops, the internet check fails -> qbittorrent goes unhealthy
+    # -> autoheal restarts it -> it re-attaches to the fresh VPN.
+    # (lsio images include curl, so this test is safe here.)
+    labels:
+      - "autoheal=true"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf -m 10 https://1.1.1.1 -o /dev/null || exit 1"]
+      interval: 60s
+      timeout: 15s
+      retries: 3
+      start_period: 90s
+
+  flood:
+    image: jesec/flood:latest
+    container_name: flood
+    user: "1000:1000"
+    restart: unless-stopped
+    network_mode: "service:pia-wireguard"
+    depends_on:
+      - pia-wireguard
+    environment:
+      - TZ=${TZ}
+      - HOME=/config
+    volumes:
+      - ./flood/config:/config
+      - /mnt/media:/data
+    # Same namespace-stranding check as qbittorrent. The flood image has no
+    # curl, so this uses wget (verified present in the image).
+    labels:
+      - "autoheal=true"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider -T 10 https://1.1.1.1 || exit 1"]
+      interval: 60s
+      timeout: 15s
+      retries: 3
+      start_period: 90s
+
+  # ============================================
+  # Usenet Download Client (SABnzbd) -- BEHIND VPN
+  # Runs in the PIA namespace so your ISP only sees an encrypted tunnel to
+  # PIA, not a connection to a Usenet provider.
+  #
+  # SABnzbd listens on 8085 (set in /config/sabnzbd.ini), qbittorrent on 8081,
+  # so they do not collide in the shared namespace.
+  # SABnzbd has NO ports:/networks: of its own -- its UI is published on
+  # pia-wireguard ("9700:8085"). Reach it at http://192.0.2.10:9700
+  #
+  # SABnzbd just downloads files (verify/repair/unpack) -- no crawler, no
+  # Postgres, only a tiny SQLite history. Nothing to tune.
+  #
+  # IN SABnzbd: Settings > General, host_whitelist must include 192.0.2.10
+  # and sabnzbd.example.com or it returns "Unauthorized".
+  # ============================================
+  sabnzbd:
+    image: lscr.io/linuxserver/sabnzbd:latest
+    container_name: sabnzbd
+    restart: unless-stopped
+    network_mode: "service:pia-wireguard"
+    depends_on:
+      - pia-wireguard
+    volumes:
+      - ./sabnzbd/config:/config
+      - /mnt/media:/data
+    environment:
+      - TZ=${TZ}
+      - PUID=${PUID}
+      - PGID=${PGID}
+    # Shares pia-wireguard's network namespace. When that container restarts the
+    # namespace is destroyed and sabnzbd is stranded -- still "Up", no network --
+    # until recreated. This connectivity check detects that; autoheal restarts it.
+    # (Mirrors the pattern already proven on qbittorrent above.)
+    labels:
+      - "autoheal=true"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf -m 10 https://1.1.1.1 -o /dev/null || exit 1"]
+      interval: 60s
+      timeout: 15s
+      retries: 3
+      start_period: 90s
+
+  # --- bitmagnet: self-hosted torrent indexer / DHT crawler ---
+  # Runs in the VPN namespace alongside qbittorrent/flood/sabnzbd.
+  # Its Postgres also rides the VPN namespace so bitmagnet reaches it
+  # over localhost (loopback bypasses the PIA kill-switch firewall).
+  bitmagnet-db:
+    # pgautoupgrade, not stock postgres: in-place major upgrades so this can
+    # track latest. If you come from a stock postgres image it upgrades the
+    # data dir in place on first start; the index is rebuildable from DHT,
+    # so the stakes are low.
+    image: pgautoupgrade/pgautoupgrade:alpine
+    container_name: bitmagnet-db
+    restart: unless-stopped
+    network_mode: "service:pia-wireguard"
+    depends_on:
+      - pia-wireguard
+    volumes:
+      - ./bitmagnet/db:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_DB=bitmagnet
+      - POSTGRES_PASSWORD=${BITMAGNET_DB_PASSWORD}
+      - PGUSER=postgres
+      # Same PGDATA override as gitea-db: postgres 18 images ignore the
+      # /var/lib/postgresql/data bind mount without it.
+      - PGDATA=/var/lib/postgresql/data
+    shm_size: 2g
+    # Postgres tuning for NVMe + ample RAM (defaults assume a tiny machine on
+    # spinning disk). Pays off as the bitmagnet DB grows to tens of GB.
+    command:
+      - postgres
+      - -c
+      - shared_buffers=2GB
+      - -c
+      - effective_cache_size=6GB
+      - -c
+      - work_mem=64MB
+      - -c
+      - maintenance_work_mem=512MB
+      - -c
+      - random_page_cost=1.1
+      - -c
+      - effective_io_concurrency=200
+    # pg_isready alone is NOT sufficient here: it succeeds over the local unix
+    # socket even when pia-wireguard's namespace has been destroyed, so a
+    # stranded bitmagnet-db would still report healthy. The nc probe tests
+    # namespace liveness. pg_isready is KEPT because bitmagnet gates on
+    # condition: service_healthy and must not start before Postgres is ready.
+    labels:
+      - "autoheal=true"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -q && nc -z -w 5 1.1.1.1 443 || exit 1"]
+      interval: 60s
+      timeout: 15s
+      retries: 3
+      start_period: 120s
+
+  bitmagnet:
+    image: ghcr.io/bitmagnet-io/bitmagnet:latest
+    container_name: bitmagnet
+    restart: unless-stopped
+    network_mode: "service:pia-wireguard"
+    depends_on:
+      bitmagnet-db:
+        condition: service_healthy
+    volumes:
+      - ./bitmagnet/config:/root/.config/bitmagnet
+    environment:
+      - TZ=${TZ}
+      # 127.0.0.1, NOT localhost: localhost also resolves to ::1, and the PIA
+      # kill-switch DROPS IPv6 loopback instead of refusing it -- a dial that
+      # lands on ::1 with no deadline hangs bitmagnet's startup forever
+      # (wedged silently at pgx pool.Acquire, found via SIGQUIT dump).
+      - POSTGRES_HOST=127.0.0.1
+      - POSTGRES_PASSWORD=${BITMAGNET_DB_PASSWORD}
+      - TMDB_API_KEY=${TMDB_API_KEY}   # optional, improves content classification
+    command:
+      - worker
+      - run
+      - --keys=http_server
+      - --keys=queue_server
+      # disable the next line to run without the DHT crawler
+      - --keys=dht_crawler
+    # Same namespace-stranding check as sabnzbd/flood above.
+    labels:
+      - "autoheal=true"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf -m 10 https://1.1.1.1 -o /dev/null || exit 1"]
+      interval: 60s
+      timeout: 15s
+      retries: 3
+      start_period: 90s

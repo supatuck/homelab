@@ -1,0 +1,239 @@
+services:
+  # ============================================
+  # Media & Dashboard
+  # ============================================
+  jellyfin:
+    image: lscr.io/linuxserver/jellyfin:latest
+    container_name: jellyfin
+    restart: unless-stopped
+    # Pin a mac_address here if your router hands out DHCP reservations by
+    # MAC; otherwise docker assigns one per container recreate.
+    networks:
+      jellyfin_lan:
+        ipv4_address: 192.0.2.41
+      proxy:
+    volumes:
+      - ./jellyfin/config:/config
+      - ./jellyfin/cache:/cache
+      - /mnt/media:/data
+    environment:
+      - TZ=${TZ}
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - JELLYFIN_PublishedServerUrl=https://jellyfin.example.com
+      # The image ships the OpenCL loader but no Intel runtime, so Jellyfin's
+      # "-init_hw_device opencl=ocl@va" fails and every tone-mapped transcode
+      # (DV/HDR) dies before the first frame. Supplies libigdrcl.so for the Arc.
+      - DOCKER_MODS=linuxserver/mods:universal-package-install
+      - INSTALL_PACKAGES=intel-opencl-icd
+    devices:
+      - /dev/dri:/dev/dri
+    group_add:
+      - "992"   # render
+      - "44"    # video
+
+  # ============================================
+  # Media Management (*arr Stack)
+  # ============================================
+  flaresolverr:
+    image: ghcr.io/flaresolverr/flaresolverr:latest
+    container_name: flaresolverr
+    restart: unless-stopped
+    ports:
+      - "8191:8191"
+    environment:
+      - TZ=${TZ}
+      - LOG_LEVEL=info
+    networks:
+      - proxy
+
+  byparr:
+    image: ghcr.io/thephaseless/byparr:latest
+    container_name: byparr
+    restart: unless-stopped
+    ports:
+      - "8192:8191"
+    environment:
+      - TZ=${TZ}
+    networks:
+      - proxy
+
+  prowlarr:
+    image: lscr.io/linuxserver/prowlarr:latest
+    container_name: prowlarr
+    restart: unless-stopped
+    ports:
+      - "9200:9696"
+    volumes:
+      - ./prowlarr/config:/config
+    environment:
+      - TZ=${TZ}
+      - PUID=${PUID}
+      - PGID=${PGID}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - proxy
+
+  radarr:
+    image: lscr.io/linuxserver/radarr:latest
+    container_name: radarr
+    restart: unless-stopped
+    ports:
+      - "9300:7878"
+    volumes:
+      - ./radarr/config:/config
+      - /mnt/media:/data
+    environment:
+      - TZ=${TZ}
+      - PUID=${PUID}
+      - PGID=${PGID}
+    networks:
+      - proxy
+
+  radarr4k:
+    image: lscr.io/linuxserver/radarr:latest
+    container_name: radarr4k
+    restart: unless-stopped
+    ports:
+      - "9301:7878"
+    volumes:
+      - ./radarr4k/config:/config
+      - /mnt/media:/data
+    environment:
+      - TZ=${TZ}
+      - PUID=${PUID}
+      - PGID=${PGID}
+    networks:
+      - proxy
+
+  sonarr:
+    image: lscr.io/linuxserver/sonarr:latest
+    container_name: sonarr
+    restart: unless-stopped
+    ports:
+      - "9400:8989"
+    volumes:
+      - ./sonarr/config:/config
+      - /mnt/media:/data
+    environment:
+      - TZ=${TZ}
+      - PUID=${PUID}
+      - PGID=${PGID}
+    networks:
+      - proxy
+
+  sonarr4k:
+    image: lscr.io/linuxserver/sonarr:latest
+    container_name: sonarr4k
+    restart: unless-stopped
+    ports:
+      - "9401:8989"
+    volumes:
+      - ./sonarr4k/config:/config
+      - /mnt/media:/data
+    environment:
+      - TZ=${TZ}
+      - PUID=${PUID}
+      - PGID=${PGID}
+    networks:
+      - proxy
+
+  checkrr:
+    image: aetaric/checkrr:latest
+    container_name: checkrr
+    restart: unless-stopped
+    ports:
+      - "8585:8585"
+    volumes:
+      # Create this file before first start (see checkrr's README for the
+      # format) -- otherwise docker creates a directory at the path.
+      - ./checkrr/config/checkrr.yaml:/etc/checkrr/checkrr.yaml:ro
+      - ./checkrr/config:/config
+      - /mnt/media:/data
+    environment:
+      - TZ=${TZ}
+    networks:
+      - proxy
+
+  tdarr:
+    # Pinned deliberately: 2.86.01 hot-loops retrying inotify watchers against
+    # the CIFS media mount (~490 ENOSPC/sec, a full CPU core, unrotated log)
+    # where inotify cannot work at all -- see the Storage note in README.
+    # 2.85.01 idles at <1% CPU. Retry :latest once upstream stops watching,
+    # or turn folder-watch off in the library settings and rely on scans.
+    image: ghcr.io/haveagitgat/tdarr:2.85.01
+    container_name: tdarr
+    restart: unless-stopped
+    ports:
+      - "8265:8265"
+      - "8266:8266"
+    volumes:
+      - ./tdarr/server:/app/server
+      - ./tdarr/configs:/app/configs
+      - ./tdarr/logs:/app/logs
+      - /mnt/media:/data
+      - ./tdarr/transcode_cache:/temp
+    environment:
+      - TZ=${TZ}
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - serverIP=0.0.0.0
+      - serverPort=8266
+      - webUIPort=8265
+      - internalNode=true
+      - inContainer=true
+      - ffmpegVersion=7
+      - nodeName=InternalNode
+    devices:
+      - /dev/dri:/dev/dri
+    group_add:
+      - "992"   # render
+      - "44"    # video
+    networks:
+      - proxy
+
+  bazarr:
+    image: lscr.io/linuxserver/bazarr:latest
+    container_name: bazarr
+    restart: unless-stopped
+    ports:
+      - "9500:6767"
+    volumes:
+      - ./bazarr/config:/config
+      - /mnt/media:/data
+    environment:
+      - TZ=${TZ}
+      - PUID=${PUID}
+      - PGID=${PGID}
+    networks:
+      - proxy
+
+  bazarr4k:
+    image: lscr.io/linuxserver/bazarr:latest
+    container_name: bazarr4k
+    restart: unless-stopped
+    ports:
+      - "9501:6767"
+    volumes:
+      - ./bazarr4k/config:/config
+      - /mnt/media:/data
+    environment:
+      - TZ=${TZ}
+      - PUID=${PUID}
+      - PGID=${PGID}
+    networks:
+      - proxy
+
+  jellyseerr:
+    image: ghcr.io/seerr-team/seerr:latest
+    container_name: jellyseerr
+    restart: unless-stopped
+    ports:
+      - "9600:5055"
+    volumes:
+      - ./jellyseerr/config:/app/config
+    environment:
+      - TZ=${TZ}
+    networks:
+      - proxy

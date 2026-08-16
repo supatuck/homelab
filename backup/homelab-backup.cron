@@ -1,0 +1,6 @@
+# Weekly homelab backup: db dumps + rsync mirror to the NAS (backup/backup.sh).
+# Install:  sudo cp backup/homelab-backup.cron /etc/cron.d/homelab-backup
+# Logs:     /var/log/homelab-backup.log
+SHELL=/bin/sh
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+30 3 * * 0 root /opt/homelab/backup/backup.sh >>/var/log/homelab-backup.log 2>&1

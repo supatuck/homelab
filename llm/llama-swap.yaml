@@ -1,0 +1,68 @@
+# llama-swap: OpenAI-compatible proxy that starts/stops llama-server per
+# model on demand. Only one model is resident at a time; it unloads after
+# `ttl` seconds idle so the GPU goes back to Jellyfin/tdarr.
+#
+# Hardware envelope this is tuned for: Arc B580 (12 GB VRAM) + 32 GB system
+# RAM shared with the container stack. The 20B/30B models are MoE, so the
+# trick is --n-cpu-moe: expert tensors that don't fit VRAM live in system
+# RAM while attention stays on the GPU. qwen3-4b is dense and fits whole.
+#
+# NOTE: no vision models. gemma3's mmproj computed garbage on
+# SYCL and wedged the xe driver hard enough to need a reboot -- don't add
+# an mmproj here until llama.cpp's SYCL vision path is proven on Arc.
+
+healthCheckTimeout: 300
+
+models:
+  # 21B MoE (3.6B active), native MXFP4. The daily driver: nearly all of it
+  # fits VRAM, small expert spill to RAM, strong reasoning for its size.
+  "gpt-oss-20b":
+    ttl: 900
+    cmd: |
+      /app/llama-server
+      -m /models/gpt-oss-20b-MXFP4.gguf
+      --port ${PORT}
+      --jinja
+      -ngl 999
+      --n-cpu-moe 6
+      -c 16384
+
+  # 30B MoE (3B active), the strongest general model this box can serve.
+  # ~8 GB of experts sit in system RAM while loaded -- fine when the stack
+  # is quiet, avoid pinning it resident (short ttl).
+  "qwen3-30b-a3b":
+    ttl: 300
+    cmd: |
+      /app/llama-server
+      -m /models/Qwen3-30B-A3B-Instruct-2507-Q4_K_M.gguf
+      --port ${PORT}
+      --jinja
+      -ngl 999
+      --n-cpu-moe 28
+      -c 16384
+
+  # Same 30B-MoE envelope as qwen3-30b-a3b, tuned for code. Route editor
+  # plugins and coding chats here, general questions to the others.
+  "qwen3-coder-30b":
+    ttl: 300
+    cmd: |
+      /app/llama-server
+      -m /models/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf
+      --port ${PORT}
+      --jinja
+      -ngl 999
+      --n-cpu-moe 28
+      -c 16384
+
+  # 4B dense at Q8, entirely in VRAM: loads in seconds, answers fast, and
+  # leaves room for a Jellyfin transcode. The right target for scripted
+  # calls and quick questions.
+  "qwen3-4b":
+    ttl: 900
+    cmd: |
+      /app/llama-server
+      -m /models/Qwen3-4B-Instruct-2507-Q8_0.gguf
+      --port ${PORT}
+      --jinja
+      -ngl 999
+      -c 32768

@@ -1,0 +1,22 @@
+name: homelab
+
+include:
+  - compose.infra.yml
+  - compose.apps.yml
+  - compose.media.yml
+  - compose.download.yml
+  - compose.ai.yml
+
+networks:
+  proxy:
+    name: proxy
+    driver: bridge
+  jellyfin_lan:
+    driver: macvlan
+    driver_opts:
+      parent: eth0  # Your actual NIC - check with 'ip a'
+    ipam:
+      config:
+        - subnet: 192.0.2.0/24
+          gateway: 192.0.2.1
+          ip_range: 192.0.2.40/29  # Reserve a small range for Docker

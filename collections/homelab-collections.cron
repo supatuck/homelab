@@ -1,0 +1,13 @@
+# Weekly Auto Collections coverage report: which studios have no brand hub yet.
+# Reports only -- it never creates or edits collections. Curation stays manual
+# because one-collection-per-studio yields hundreds of fragments and breaks the
+# curated OR-merges (see collections/coverage.py).
+#
+# Install:  sudo cp collections/homelab-collections.cron /etc/cron.d/homelab-collections
+# Logs:     /var/log/homelab-collections.log
+# Manual:   ./collections/coverage.py 5
+SHELL=/bin/sh
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+# Runs as root like homelab-backup.cron: /var/log is not writable by the
+# homelab user, so a non-root job fails on the redirect and logs nothing.
+15 4 * * 0 root /opt/homelab/collections/coverage.py 5 >>/var/log/homelab-collections.log 2>&1

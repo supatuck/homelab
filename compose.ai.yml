@@ -1,0 +1,78 @@
+# ==========================================================================
+# AI: local model serving + chat UI + the OpenClaw assistant
+#
+#   llama-swap   OpenAI-compatible proxy over llama.cpp (SYCL build for the
+#                Arc B580); loads/unloads models on demand per llm/llama-swap.yaml
+#   open-webui   chat front end; talks to llama-swap, optionally to API models
+#   openclaw     personal AI agent, Claude subscription auth, WEB UI ONLY --
+#                no messaging channels, gateway never exposed beyond NPM
+#
+# OpenClaw is the one container in this stack that executes LLM-driven
+# actions, so it gets the opposite of the usual treatment: NO docker socket,
+# NO homelab mount, only its own state dirs, dropped net capabilities,
+# no-new-privileges. Its blast radius is its own workspace.
+# ==========================================================================
+
+services:
+  llama-swap:
+    image: ghcr.io/mostlygeek/llama-swap:intel
+    container_name: llama-swap
+    restart: unless-stopped
+    ports:
+      - "9810:8080"
+    volumes:
+      - ./llm/llama-swap.yaml:/app/config.yaml:ro
+      - ./llm/models:/models:ro
+    devices:
+      - /dev/dri:/dev/dri
+    group_add:
+      - "992"   # render, same as jellyfin
+    environment:
+      - TZ=${TZ}
+    networks:
+      - proxy
+
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: open-webui
+    restart: unless-stopped
+    ports:
+      - "3000:8080"
+    volumes:
+      - ./open-webui/data:/app/backend/data
+    environment:
+      - TZ=${TZ}
+      - OPENAI_API_BASE_URL=http://llama-swap:8080/v1
+      - OPENAI_API_KEY=local-llama-swap
+      - ENABLE_OLLAMA_API=false
+      - WEBUI_URL=https://chat.example.com
+    depends_on:
+      - llama-swap
+    networks:
+      - proxy
+
+  openclaw:
+    image: ghcr.io/openclaw/openclaw:2026.7.2-beta.7
+    container_name: openclaw
+    restart: unless-stopped
+    ports:
+      - "18789:18789"
+    volumes:
+      - ./openclaw/config:/home/node/.openclaw
+      - ./openclaw/workspace:/home/node/.openclaw/workspace
+      - ./openclaw/secrets:/home/node/.config/openclaw
+    # --allow-unconfigured serves the Control UI before onboarding so setup
+    # (including Claude subscription OAuth) happens in the browser instead of
+    # an interactive terminal wizard. Harmless once configured.
+    command: ["node", "openclaw.mjs", "gateway", "--allow-unconfigured"]
+    environment:
+      - TZ=${TZ}
+      - OPENCLAW_GATEWAY_BIND=lan
+      - OPENCLAW_GATEWAY_TOKEN=${OPENCLAW_GATEWAY_TOKEN}
+    cap_drop:
+      - NET_RAW
+      - NET_ADMIN
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - proxy

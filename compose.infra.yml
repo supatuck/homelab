@@ -1,0 +1,180 @@
+services:
+  # ============================================
+  # Reverse Proxy & Network Management
+  # ============================================
+  nginx-proxy-manager:
+    image: jc21/nginx-proxy-manager:latest
+    container_name: nginx-proxy-manager
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "81:81"
+    volumes:
+      - ./npm/data:/data
+      - ./npm/letsencrypt:/etc/letsencrypt
+    environment:
+      - TZ=${TZ}
+    networks:
+      - proxy
+
+  # ============================================
+  # Container auto-recovery
+  # Restarts any container labeled autoheal=true that goes "unhealthy".
+  # ============================================
+  autoheal:
+    image: willfarrell/autoheal:latest
+    container_name: autoheal
+    restart: unless-stopped
+    environment:
+      - TZ=${TZ}
+      - AUTOHEAL_CONTAINER_LABEL=autoheal
+      - AUTOHEAL_INTERVAL=15
+      - AUTOHEAL_START_PERIOD=120
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+
+  # ============================================
+  # System Monitoring (Beszel)
+  # hub = web UI; agent = collects host + container metrics.
+  # FIRST RUN: agent restarts until you add the system in the hub UI and
+  # paste the generated KEY + TOKEN into your .env (BESZEL_KEY / BESZEL_TOKEN).
+  # In the "Add System" dialog use Host/IP = /beszel_socket/beszel.sock
+  # ============================================
+  beszel:
+    image: henrygd/beszel:latest
+    container_name: beszel
+    restart: unless-stopped
+    ports:
+      - "8090:8090"
+    volumes:
+      - ./beszel/data:/beszel_data
+      - ./beszel/socket:/beszel_socket
+    environment:
+      - APP_URL=https://beszel.example.com   # change to your NPM domain once set up
+    networks:
+      - proxy
+
+  beszel-agent:
+    # Custom image: upstream agent + nvtop 3.3.2. The official
+    # henrygd/beszel-agent-intel ships only intel_gpu_top, which is i915-only
+    # and reports "no discrete/integrated i915 devices found" on this Arc
+    # Battlemage card. Beszel's nvtop collector handles it, but needs 3.3.2+.
+    build: ./beszel-agent-gpu
+    image: homelab/beszel-agent-gpu:latest
+    container_name: beszel-agent
+    restart: unless-stopped
+    network_mode: host          # needed to read host network-interface stats
+    # CAP_PERFMON lets nvtop read the xe PMU engine counters; without it the
+    # GPU appears but reports no utilisation.
+    cap_add:
+      - PERFMON
+    devices:
+      - /dev/dri:/dev/dri
+    group_add:
+      - "992"   # render
+      - "44"    # video
+    volumes:
+      - ./beszel/agent_data:/var/lib/beszel-agent
+      - ./beszel/socket:/beszel_socket
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    environment:
+      - LISTEN=/beszel_socket/beszel.sock
+      - HUB_URL=http://localhost:8090
+      - KEY=${BESZEL_KEY}
+      - TOKEN=${BESZEL_TOKEN}
+      # nvtop cannot be combined with other collectors, so pin it explicitly
+      # rather than letting auto-detection pick the broken intel_gpu_top.
+      - GPU_COLLECTOR=nvtop
+
+  # ============================================
+  # GPU metrics exporter (Intel Arc B580, xe driver)
+  # Nothing off the shelf reads this card: the usual tools assume NVIDIA
+  # (nvidia-smi) or i915 (intel_gpu_top fails on Battlemage with "no
+  # discrete/integrated i915 devices found"). This wraps nvtop, which does
+  # support it, and fills the gaps from sysfs. Consumed by the Glance
+  # custom-api widget over the proxy network - no published port.
+  # ============================================
+  gpu-exporter:
+    build: ./gpu-exporter
+    image: homelab/gpu-exporter:latest
+    container_name: gpu-exporter
+    restart: unless-stopped
+    # CAP_PERFMON lets nvtop read the xe PMU (engine-active-ticks /
+    # engine-total-ticks), which is what produces a real utilisation figure.
+    # Without it gpu_util reports null. Granting it here keeps the host's
+    # perf_event_paranoid at 2 rather than lowering it system-wide.
+    cap_add:
+      - PERFMON
+    devices:
+      - /dev/dri:/dev/dri
+    group_add:
+      - "992"   # render
+      - "44"    # video
+    volumes:
+      - /sys:/sys:ro
+    environment:
+      - TZ=${TZ}
+    networks:
+      - proxy
+
+  # ============================================
+  # Uptime monitoring + alerting
+  # Beszel graphs resource usage but never alerts; without a monitor layer,
+  # faults like a failed NAS mount or a dead indexer sync can run unnoticed
+  # for weeks. Kuma is the alerting source of truth here.
+  # ============================================
+  uptime-kuma:
+    # :2 IS the current line -- upstream keeps :latest parked on the frozen
+    # 1.x images, so "latest" here means tracking the 2.x major tag. Coming
+    # from 1.x, the data dir migrates in place on first boot (no downgrade
+    # path; take a copy of the data dir first).
+    image: louislam/uptime-kuma:2
+    container_name: uptime-kuma
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    volumes:
+      - ./uptime-kuma/data:/app/data
+      # lets it monitor container health directly, not just HTTP endpoints
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    environment:
+      - TZ=${TZ}
+    networks:
+      - proxy
+
+  # ============================================
+  # Live log viewer for all containers
+  # Read-only; no database, no persistence.
+  # ============================================
+  dozzle:
+    image: amir20/dozzle:latest
+    container_name: dozzle
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    environment:
+      - TZ=${TZ}
+      - DOZZLE_NO_ANALYTICS=true
+    networks:
+      - proxy
+
+  # ============================================
+  # Docker Management
+  # ============================================
+  portainer:
+    image: portainer/portainer-ce:latest
+    container_name: portainer
+    restart: unless-stopped
+    ports:
+      - "9000:9000"
+      - "9443:9443"
+    volumes:
+      - ./portainer/data:/data
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - TZ=${TZ}
+    networks:
+      - proxy

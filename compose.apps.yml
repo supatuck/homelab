@@ -1,0 +1,342 @@
+services:
+  glance:
+    image: glanceapp/glance:latest
+    container_name: glance
+    restart: unless-stopped
+    ports:
+      - "8200:8080"
+    volumes:
+      - ./glance/config:/app/config
+      # docker-containers widget talks to the Docker API; without this it
+      # fails with "dial unix /var/run/docker.sock: no such file or directory"
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      # custom.css lives here; theme.custom-css-file points at /assets/custom.css
+      - ./glance/assets:/app/assets
+    environment:
+      - TZ=${TZ}
+      - GITHUB_TOKEN=${GITHUB_TOKEN}
+    networks:
+      - proxy
+
+  # CouchDB backend for Obsidian "Self-hosted LiveSync" plugin.
+  # local.ini holds the CORS + request-size settings LiveSync requires;
+  # single_node=true makes CouchDB create its system DBs on first boot.
+  # Mobile Obsidian requires a valid SSL cert, so front this with NPM
+  # (e.g. couchdb.example.com) for phone sync; desktop can use the LAN IP:5984.
+  couchdb:
+    image: couchdb:latest
+    container_name: couchdb
+    restart: unless-stopped
+    ports:
+      - "5984:5984"
+    environment:
+      - COUCHDB_USER=${COUCHDB_USER}
+      - COUCHDB_PASSWORD=${COUCHDB_PASSWORD}
+    volumes:
+      - ./couchdb/data:/opt/couchdb/data
+      - ./couchdb/local.ini:/opt/couchdb/etc/local.d/local.ini
+    networks:
+      - proxy
+
+  # ============================================
+  # File Conversion & PDF Tools
+  # ============================================
+  stirling-pdf:
+    image: frooodle/s-pdf:latest
+    container_name: stirling-pdf
+    restart: unless-stopped
+    ports:
+      - "8500:8080"
+    volumes:
+      - ./stirling-pdf/data:/usr/share/tessdata
+      - ./stirling-pdf/configs:/configs
+      - ./stirling-pdf/logs:/logs
+    environment:
+      - TZ=${TZ}
+      - DOCKER_ENABLE_SECURITY=${STIRLING_ENABLE_SECURITY}
+      - SECURITY_ENABLE_LOGIN=${STIRLING_ENABLE_LOGIN}
+      - INSTALL_BOOK_AND_ADVANCED_HTML_OPS=${STIRLING_INSTALL_BOOK_OPS}
+    networks:
+      - proxy
+
+  # ============================================
+  # Password Manager
+  # ============================================
+  vaultwarden:
+    image: vaultwarden/server:latest
+    container_name: vaultwarden
+    restart: unless-stopped
+    ports:
+      - "8800:80"
+    volumes:
+      - ./vaultwarden/data:/data
+    environment:
+      - TZ=${TZ}
+      - DOMAIN=${VAULTWARDEN_DOMAIN}
+      - SIGNUPS_ALLOWED=${VAULTWARDEN_SIGNUPS_ALLOWED}
+      - INVITATIONS_ALLOWED=${VAULTWARDEN_INVITATIONS_ALLOWED}
+      - WEBSOCKET_ENABLED=${VAULTWARDEN_WEBSOCKET_ENABLED}
+    networks:
+      - proxy
+
+  # ============================================
+  # Developer Tools
+  # ============================================
+  it-tools:
+    image: corentinth/it-tools:latest
+    container_name: it-tools
+    restart: unless-stopped
+    ports:
+      - "8900:80"
+    environment:
+      - TZ=${TZ}
+    networks:
+      - proxy
+
+  # ============================================
+  # Git Forge (Gitea)
+  # Clone/push over https:// using a Gitea access token as the password.
+  # Front with NPM: git.example.com -> 192.0.2.10:8100 (lives in the NPM UI).
+  # Registration is disabled -- create users from the admin panel.
+  # Note if you come from Forgejo: the schemas hard-forked in 2024, so a
+  # Forgejo db cannot be reused -- stand up fresh and push --mirror instead.
+  # Image tracks :latest (user's call). CAUTION: the github theme templates
+  # in ./gitea/data/gitea/templates are version-locked to the Gitea MINOR,
+  # so a pull that lands 1.28+ needs the matching release of
+  # https://github.com/lutinglt/gitea-github-theme dropped in. If the UI
+  # breaks or gitea refuses to start after a pull, move the templates dir
+  # aside (stock layout comes back instantly), then install the matching
+  # templates + css.
+  # ============================================
+  gitea-db:
+    # pgautoupgrade, not stock postgres: migrates the data dir in place on
+    # major bumps instead of refusing to start, so this can track latest.
+    # If you come from a stock postgres image, it upgrades the data dir on
+    # first start; take a dump first anyway.
+    image: pgautoupgrade/pgautoupgrade:alpine
+    container_name: gitea-db
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=${GITEA_DB_NAME}
+      - POSTGRES_USER=${GITEA_DB_USER}
+      - POSTGRES_PASSWORD=${GITEA_DB_PASSWORD}
+      # postgres 18 images moved PGDATA to /var/lib/postgresql/18/docker;
+      # without this override the bind mount below is IGNORED and a fresh
+      # ephemeral cluster boots inside the container.
+      - PGDATA=/var/lib/postgresql/data
+    volumes:
+      - ./gitea/db:/var/lib/postgresql/data
+    networks:
+      - proxy
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${GITEA_DB_USER} -d ${GITEA_DB_NAME}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  gitea:
+    image: gitea/gitea:latest
+    container_name: gitea
+    restart: unless-stopped
+    depends_on:
+      gitea-db:
+        condition: service_healthy
+    ports:
+      - "8100:3000"
+      - "2222:2222"        # git over SSH
+    volumes:
+      - ./gitea/data:/data
+    environment:
+      - TZ=${TZ}
+      - USER_UID=${PUID}
+      - USER_GID=${PGID}
+      - GITEA__database__DB_TYPE=postgres
+      - GITEA__database__HOST=gitea-db:5432
+      - GITEA__database__NAME=${GITEA_DB_NAME}
+      - GITEA__database__USER=${GITEA_DB_USER}
+      - GITEA__database__PASSWD=${GITEA_DB_PASSWORD}
+      - GITEA__server__ROOT_URL=${GITEA_ROOT_URL}
+      - GITEA__server__DOMAIN=git.example.com
+      # Git over SSH on 2222 via Gitea's own Go SSH server rather than an
+      # sshd inside the container. That keeps key handling entirely in the
+      # database: there is no ~git/.ssh/authorized_keys to write, so the usual
+      # container failure modes (file never generated, or sshd silently
+      # ignoring it because ~/.ssh perms aren't 700/600) cannot occur.
+      # SSH_PORT is what gets advertised in clone URLs; SSH_LISTEN_PORT is
+      # what it binds inside the container. Both 2222 so the mapping is 1:1.
+      # The host key lives in ./gitea/data/gitea/ssh; keep it across
+      # reinstalls (or carry one over from a previous forge) so existing
+      # clients see no known_hosts change.
+      - GITEA__server__DISABLE_SSH=false
+      - GITEA__server__START_SSH_SERVER=true
+      - GITEA__server__SSH_PORT=2222
+      - GITEA__server__SSH_LISTEN_PORT=2222
+      - GITEA__server__SSH_DOMAIN=git.example.com
+      - GITEA__security__INSTALL_LOCK=true
+      # Sessions default to the memory provider, so every container restart
+      # logs everyone out -- and a logged-out theme POST bounces through
+      # login into a bare 405 page that looks like an outage. db-backed
+      # sessions survive restarts.
+      - GITEA__session__PROVIDER=db
+      - GITEA__service__DISABLE_REGISTRATION=true
+      # Pinned explicitly so public repos stay anonymously readable on
+      # purpose rather than by an app.ini default you never chose.
+      - GITEA__service__REQUIRE_SIGNIN_VIEW=false
+      # GitHub-styled themes from lutinglt/gitea-github-theme (CSS in
+      # ./gitea/data/gitea/public/assets/css, templates version-locked, see
+      # header). THEMES replaces the built-in list rather than extending it,
+      # so the stock gitea-* names are listed to keep them.
+      - GITEA__ui__THEMES=github-auto,github-light,github-dark,github-soft-dark,github-colorblind-auto,github-colorblind-light,github-colorblind-dark,github-tritanopia-auto,github-tritanopia-light,github-tritanopia-dark,github-high-contrast-auto,github-high-contrast-light,github-high-contrast-dark,github-high-contrast-soft-dark,gitea-auto,gitea-light,gitea-dark
+      - GITEA__ui__DEFAULT_THEME=github-auto
+    networks:
+      - proxy
+
+  # ============================================
+  # Game Server Panel (Calagopus)
+  # A Rust reimplementation of Pterodactyl -- panel + a full Wings rewrite.
+  # Split deployment: the panel is one container, Wings the node daemon is
+  # another, so Wings can later move to its own host without rebuilding the
+  # panel. Front with NPM: panel.example.com -> 192.0.2.10:8000, and turn ON
+  # "Websockets Support" in the NPM proxy host or the server console and
+  # live resource graphs will connect and then immediately hang up.
+  #
+  # The panel is cheap -- ~90MB for the web process, ~150MB for postgres,
+  # ~20MB for valkey. What costs real memory is the JVMs Wings spawns, so
+  # size the node's memory limit against the game servers, not this stack.
+  #
+  # !! Wings gets a read-write docker socket, which is root-equivalent on
+  # !! this host, on the SAME daemon running jellyfin, vaultwarden and the
+  # !! *arr stack. That is inherent to every Pterodactyl-style panel:
+  # !! creating and destroying containers is the daemon's entire job. It is
+  # !! the opposite of the treatment openclaw gets in compose.ai.yml, and it
+  # !! is the reason to keep panel registration disabled and to hand out
+  # !! subusers rather than admin accounts.
+  # ============================================
+  calagopus-db:
+    # pgautoupgrade, not stock postgres: it migrates the data directory in
+    # place on a major-version bump instead of refusing to start on a PGDATA
+    # written by an older server.
+    image: ghcr.io/calagopus/pgautoupgrade:18-alpine
+    container_name: calagopus-db
+    restart: unless-stopped
+    environment:
+      - TZ=${TZ}
+      - POSTGRES_DB=${CALAGOPUS_DB_NAME}
+      - POSTGRES_USER=${CALAGOPUS_DB_USER}
+      - POSTGRES_PASSWORD=${CALAGOPUS_DB_PASSWORD}
+      # This image expects PGDATA at the mount root, unlike the stock postgres
+      # image's /var/lib/postgresql/data subdirectory.
+      - PGDATA=/data
+    volumes:
+      - ./calagopus/postgres:/data
+    networks:
+      - proxy
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${CALAGOPUS_DB_USER} -d ${CALAGOPUS_DB_NAME}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  calagopus-cache:
+    image: ghcr.io/calagopus/valkey:latest
+    container_name: calagopus-cache
+    restart: unless-stopped
+    # protected-mode off is safe here only because no port is published: the
+    # cache is reachable on the proxy network and nowhere else.
+    command: --protected-mode no --save 60 1
+    environment:
+      - TZ=${TZ}
+    volumes:
+      - ./calagopus/cache:/data
+    networks:
+      - proxy
+
+  calagopus:
+    image: ghcr.io/calagopus/panel:latest
+    container_name: calagopus
+    restart: unless-stopped
+    # The panel's shutdown handlers need longer than docker's 10s default;
+    # killing it mid-flush can leave background tasks half-finished.
+    stop_grace_period: 40s
+    depends_on:
+      calagopus-db:
+        condition: service_healthy
+      calagopus-cache:
+        condition: service_started
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./calagopus/data:/var/lib/calagopus
+      - ./calagopus/logs:/var/log/calagopus
+    environment:
+      - TZ=${TZ}
+      - PORT=8000
+      - DATABASE_URL=postgresql://${CALAGOPUS_DB_USER}:${CALAGOPUS_DB_PASSWORD}@calagopus-db/${CALAGOPUS_DB_NAME}
+      - DATABASE_MIGRATE=true
+      - REDIS_URL=redis://calagopus-cache
+      - APP_DEBUG=false
+      - APP_LOG_DIRECTORY=/var/log/calagopus
+      # This is the only panel instance, so it owns the background tasks.
+      - APP_PRIMARY=true
+      # Browser -> panel -> wings, so Wings needs no domain, no second NPM
+      # host and no cert of its own; the node is registered by its container
+      # name on the proxy network and never published. The documented cost is
+      # that all console/file traffic funnels through the panel, which only
+      # matters at many-node or high-bandwidth scale. Not this.
+      - APP_ENABLE_WINGS_PROXY=true
+      # Encrypts node tokens and other secrets at rest. The panel refuses to
+      # start without it, and rotating it means re-encrypting everything
+      # already stored -- treat it as permanent once servers exist.
+      - APP_ENCRYPTION_KEY=${CALAGOPUS_ENCRYPTION_KEY}
+      - APP_USE_DECRYPTION_CACHE=true
+      - APP_USE_INTERNAL_CACHE=true
+      # Without this every request is attributed to NPM's container IP, so
+      # rate limiting and the activity log both see one client instead of many.
+      - APP_TRUSTED_PROXIES=${CALAGOPUS_TRUSTED_PROXIES}
+    networks:
+      - proxy
+
+  calagopus-wings:
+    image: ghcr.io/calagopus/wings:latest
+    container_name: calagopus-wings
+    restart: unless-stopped
+    ports:
+      # SFTP only. Wings' own HTTP API (8080) is deliberately NOT published:
+      # the panel reaches it at http://calagopus-wings:8080 over the proxy
+      # network, and 8080 on this host is dozzle anyway.
+      #
+      # Game server ports are absent on purpose and must stay absent. Wings
+      # creates each server as a SIBLING container on this host's daemon and
+      # gives it the port bindings from its allocation, so 25565-25575 are
+      # published per-server at creation time. Publishing them here as well
+      # would just take the range hostage and make every server fail to bind.
+      - "2022:2022"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Read-only would be enough for log tailing, but wings also writes here.
+      - /var/lib/docker/containers/:/var/lib/docker/containers/
+      # config.yml lives here and is NOT written by this repo -- you paste it
+      # from the panel's node configuration page. It carries the node token.
+      - /etc/calagopus-wings/:/etc/calagopus-wings/
+      # These four paths are identical on both sides of the colon, and must
+      # stay that way. Wings does not mount server files itself; it asks the
+      # HOST daemon to bind-mount them into each game container, so the path
+      # it names has to resolve identically on the host. Remapping the left
+      # side to ./calagopus/... breaks container creation, which is also why
+      # these sit outside the repo and are NOT covered by backup/backup.sh;
+      # add them there if your game servers matter.
+      - /var/lib/calagopus-wings/:/var/lib/calagopus-wings/
+      - /var/log/calagopus-wings/:/var/log/calagopus-wings/
+      - /tmp/calagopus-wings/:/tmp/calagopus-wings/
+    environment:
+      - TZ=${TZ}
+      # Wings' own service account, not the stack-wide PUID/PGID. Game server
+      # files end up owned by 988:988, which is why the *arr PUID=1000 does
+      # not apply here.
+      - WINGS_UID=988
+      - WINGS_GID=988
+      - WINGS_USERNAME=calagopus
+    networks:
+      - proxy

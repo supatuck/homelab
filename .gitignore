@@ -1,0 +1,48 @@
+*
+!.gitignore
+!LICENSE
+!couchdb/
+!couchdb/local.ini
+!pia-wireguard/
+!pia-wireguard/scripts/
+!pia-wireguard/scripts/update-qbt-port.sh
+!docker-compose.yml
+!compose.*.yml
+!*.example
+!README.md
+
+# gpu-exporter is source, not data: compose builds this image from it, so the
+# repo is not self-contained without it. Contains no secrets - it only reads
+# sysfs and shells out to nvtop.
+!gpu-exporter/
+!gpu-exporter/Dockerfile
+!gpu-exporter/*.py
+!beszel-agent-gpu/
+!beszel-agent-gpu/Dockerfile
+!beszel-agent-gpu/*.py
+
+# Glance's dashboard definition and stylesheet are hand-authored source, not
+# runtime state. Everything else under glance/ (cache, logs) stays ignored.
+# glance.yml references ${GITHUB_TOKEN} by name only; the value lives in .env.
+!glance/
+!glance/config/
+!glance/config/glance.yml
+!glance/assets/
+!glance/assets/*.css
+glance/assets/*.bak.*
+glance/config/*.bak.*
+
+# Host-side weekly backup (no container): script, cron unit, restore doc.
+!backup/
+!backup/backup.sh
+!backup/homelab-backup.cron
+!backup/RESTORE.md
+
+# Auto Collections gap report (host-side, no container): script + cron unit.
+!collections/
+!collections/coverage.py
+!collections/homelab-collections.cron
+
+# LLM serving config; the models themselves (tens of GB) stay untracked.
+!llm/
+!llm/llama-swap.yaml

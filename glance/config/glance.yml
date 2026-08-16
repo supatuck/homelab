@@ -1,0 +1,539 @@
+server:
+  assets-path: /app/assets
+# Colours are set explicitly in custom.css, because Glance derives every text
+# colour from the background and that derivation cannot reach the palette this
+# uses (see the header comment in assets/custom.css). What is left here still
+# matters for two reasons: `light:` is what puts data-scheme on <html>, which
+# is the hook the stylesheet keys off; and --bgh/--bgs/--bgl feed the few
+# inline hsl() calls Glance emits, so they are kept equal to the real page
+# colour -- 60 13 95 is #f5f5f2, 223 14 10 is #16181d.
+theme:
+  light: true
+  background-color: 60 13 95
+  primary-color: 175 77 26
+  positive-color: 163 88 20
+  negative-color: 345 83 41
+  custom-css-file: /assets/custom.css
+  presets:
+    paper:
+      light: true
+      background-color: 60 13 95
+      primary-color: 175 77 26
+      positive-color: 163 88 20
+      negative-color: 345 83 41
+    ink:
+      background-color: 223 14 10
+      primary-color: 172 66 50
+      positive-color: 156 72 67
+      negative-color: 351 95 71
+pages:
+- name: Home
+  columns:
+  - size: small
+    widgets:
+    - type: clock
+      hour-format: 12h
+      timezones:
+      - timezone: Etc/UTC
+        label: Local
+    - type: weather
+      # Swap in your own city.
+      location: Amsterdam, Netherlands
+      units: imperial
+      hour-format: 12h
+    - type: calendar
+      first-day-of-week: monday
+  - size: full
+    widgets:
+    - type: custom-api
+      title: ''
+      cache: 20s
+      url: http://gpu-exporter:8000/health.json
+      template: "{{ if not (.JSON.Bool \"ok\") }}\n<div class=\"signal-ribbon signal-ribbon--unknown\">\n  <div class=\"signal-ribbon__state\"\
+        >Status unavailable</div>\n  <div class=\"signal-ribbon__meta\">{{ .JSON.String \"error\" }}</div>\n</div>\n{{ else\
+        \ if gt (.JSON.Int \"down\") 0 }}\n<div class=\"signal-ribbon signal-ribbon--down\">\n  <div class=\"signal-ribbon__state\"\
+        >{{ .JSON.String \"down_first\" }} down</div>\n  <div class=\"signal-ribbon__meta\">\n    <b>{{ .JSON.Int \"up\" }}/{{\
+        \ .JSON.Int \"total\" }}</b> up\n    &nbsp;·&nbsp; {{ .JSON.Int \"down\" }} failing\n    &nbsp;·&nbsp; <b>{{ printf\
+        \ \"%.2f\" (.JSON.Float \"uptime_24h\") }}%</b> / 24h\n  </div>\n</div>\n{{ else }}\n<div class=\"signal-ribbon\"\
+        >\n  <div class=\"signal-ribbon__state\">All systems nominal</div>\n  <div class=\"signal-ribbon__meta\">\n    <b>{{\
+        \ .JSON.Int \"up\" }}/{{ .JSON.Int \"total\" }}</b> up\n    &nbsp;·&nbsp; <b>{{ printf \"%.2f\" (.JSON.Float \"uptime_24h\"\
+        ) }}%</b> / 24h\n  </div>\n</div>\n{{ end }}"
+    - type: search
+      bangs:
+      - title: Google
+        shortcut: '!g'
+        url: https://www.google.com/search?q={QUERY}
+      - title: GitHub
+        shortcut: '!gh'
+        url: https://github.com/search?q={QUERY}
+      - title: Reddit
+        shortcut: '!r'
+        url: https://www.reddit.com/search?q={QUERY}
+      - title: YouTube
+        shortcut: '!yt'
+        url: https://www.youtube.com/results?search_query={QUERY}
+    - type: videos
+      channels:
+      # Swap in your own channel IDs.
+      - UCXuqSBlHAE6Xw-yeJA0Tunw   # Linus Tech Tips
+      - UCsBjURrPoezykLs9EqgamOA   # Fireship
+      - UCOk-gHyjcWZNj3Br4oxwh0A   # Techno Tim
+    - type: group
+      widgets:
+      - type: reddit
+        subreddit: technology
+        show-thumbnails: true
+      - type: reddit
+        subreddit: selfhosted
+        show-thumbnails: true
+    - type: rss
+      limit: 10
+      collapse-after: 3
+      cache: 12h
+      feeds:
+      # Swap in your own reading list.
+      - url: https://selfh.st/rss/
+        title: selfh.st
+        limit: 4
+      - url: https://github.blog/feed/
+        title: GitHub Blog
+  - size: small
+    widgets:
+    - type: markets
+      markets:
+      # Swap in your own watchlist.
+      - symbol: SPY
+        name: S&P 500
+      - symbol: QQQ
+        name: Nasdaq 100
+      - symbol: BTC-USD
+        name: Bitcoin
+    - type: twitch-channels
+      channels:
+      # Swap in your own channels.
+      - christitustech
+      - networkchuck
+      - theprimeagen
+    - type: bookmarks
+      groups:
+      - title: Quick Links
+        links:
+        - title: Jellyfin
+          url: https://jellyfin.example.com
+        - title: Seerr
+          url: https://seerr.example.com
+        - title: Git
+          url: https://git.example.com
+        - title: Calagopus
+          url: https://panel.example.com
+        - title: Chat (Open WebUI)
+          url: https://chat.example.com
+        - title: OpenClaw
+          url: https://claw.example.com
+        - title: Vaultwarden
+          url: https://vaultwarden.example.com
+        - title: Kuma
+          url: https://kuma.example.com
+        - title: Portainer
+          url: https://portainer.example.com
+        - title: NPM
+          url: https://npm.example.com
+- name: Media
+  columns:
+  - size: small
+    widgets:
+    - type: monitor
+      title: Media Servers
+      style: grid
+      sites:
+      - title: Jellyfin
+        url: https://jellyfin.example.com
+        icon: di:jellyfin
+      - title: Seerr
+        url: https://seerr.example.com
+        icon: di:seerr
+  - size: full
+    widgets:
+    - type: custom-api
+      title: ''
+      cache: 20s
+      url: http://gpu-exporter:8000/health.json
+      template: "{{ if not (.JSON.Bool \"ok\") }}\n<div class=\"signal-ribbon signal-ribbon--unknown\">\n  <div class=\"signal-ribbon__state\"\
+        >Status unavailable</div>\n  <div class=\"signal-ribbon__meta\">{{ .JSON.String \"error\" }}</div>\n</div>\n{{ else\
+        \ if gt (.JSON.Int \"down\") 0 }}\n<div class=\"signal-ribbon signal-ribbon--down\">\n  <div class=\"signal-ribbon__state\"\
+        >{{ .JSON.String \"down_first\" }} down</div>\n  <div class=\"signal-ribbon__meta\">\n    <b>{{ .JSON.Int \"up\" }}/{{\
+        \ .JSON.Int \"total\" }}</b> up\n    &nbsp;·&nbsp; {{ .JSON.Int \"down\" }} failing\n    &nbsp;·&nbsp; <b>{{ printf\
+        \ \"%.2f\" (.JSON.Float \"uptime_24h\") }}%</b> / 24h\n  </div>\n</div>\n{{ else }}\n<div class=\"signal-ribbon\"\
+        >\n  <div class=\"signal-ribbon__state\">All systems nominal</div>\n  <div class=\"signal-ribbon__meta\">\n    <b>{{\
+        \ .JSON.Int \"up\" }}/{{ .JSON.Int \"total\" }}</b> up\n    &nbsp;·&nbsp; <b>{{ printf \"%.2f\" (.JSON.Float \"uptime_24h\"\
+        ) }}%</b> / 24h\n  </div>\n</div>\n{{ end }}"
+    - type: monitor
+      title: Media Management
+      style: grid
+      sites:
+      - title: Radarr
+        url: https://radarr.example.com
+        icon: di:radarr
+      - title: Radarr 4K
+        url: https://radarr4k.example.com
+        icon: di:radarr
+      - title: Sonarr
+        url: https://sonarr.example.com
+        icon: di:sonarr
+      - title: Sonarr 4K
+        url: https://sonarr4k.example.com
+        icon: di:sonarr
+      - title: Prowlarr
+        url: https://prowlarr.example.com
+        icon: di:prowlarr
+      - title: Bitmagnet
+        url: https://bitmagnet.example.com
+        icon: di:bitmagnet
+      - title: Bazarr
+        url: https://bazarr.example.com
+        icon: di:bazarr
+      - title: Bazarr 4K
+        url: https://bazarr4k.example.com
+        icon: di:bazarr
+      - title: Checkrr
+        url: https://checkrr.example.com
+        icon: si:checkmarx
+      - title: Tdarr
+        url: https://tdarr.example.com
+        icon: https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons@master/png/tdarr.png
+  - size: small
+    widgets:
+    - type: monitor
+      title: Download Clients
+      style: grid
+      sites:
+      - title: Flood
+        url: https://flood.example.com
+        icon: di:flood
+      - title: qBittorrent
+        url: https://qbit.example.com
+        icon: di:qbittorrent
+      - title: SABnzbd
+        url: https://sabnzbd.example.com
+        icon: di:sabnzbd
+      - title: FlareSolverr
+        url: https://flaresolverr.example.com
+        icon: di:cloudflare
+      - title: Byparr
+        url: https://byparr.example.com
+        icon: di:cloudflare
+    - type: releases
+      title: Watching
+      cache: 1d
+      show-source-icon: true
+      token: ${GITHUB_TOKEN}
+      repositories:
+      - glanceapp/glance
+      - jellyfin/jellyfin
+      - seerr-team/seerr
+      - dani-garcia/vaultwarden
+      - Stirling-Tools/Stirling-PDF
+      - portainer/portainer
+      - Radarr/Radarr
+      - Sonarr/Sonarr
+- name: Infra
+  columns:
+  - size: small
+    widgets:
+    - type: monitor
+      title: Network Infrastructure
+      sites:
+      - title: Gateway
+        url: https://192.0.2.1
+        allow-insecure: true
+        alt-status-codes:
+        - 200
+        - 302
+        - 301
+        icon: di:openwrt
+    - type: monitor
+      title: Management
+      sites:
+      - title: Portainer
+        url: https://portainer.example.com
+        icon: di:portainer
+    - type: monitor
+      title: Backend Infrastructure
+      style: grid
+      sites:
+      - title: PIA WireGuard
+        url: http://192.0.2.10:9100
+        icon: di:wireguard
+        allow-insecure: true
+        alt-status-codes:
+        - 200
+        - 401
+        - 302
+    - type: monitor
+      title: Monitoring & Logs
+      style: grid
+      sites:
+      - title: Uptime Kuma
+        url: https://kuma.example.com
+        icon: di:uptime-kuma
+        alt-status-codes:
+        - 302
+      - title: Dozzle
+        url: https://logs.example.com
+        icon: di:dozzle
+      - title: Beszel
+        url: https://beszel.example.com
+        icon: di:beszel
+      - title: CouchDB (Obsidian)
+        url: https://couchdb.example.com
+        icon: di:couchdb
+        allow-insecure: true
+        alt-status-codes:
+        - 200
+        - 401
+    - type: monitor
+      title: AI
+      style: grid
+      sites:
+      - title: Open WebUI
+        url: https://chat.example.com
+        icon: di:open-webui
+      - title: OpenClaw
+        url: https://claw.example.com
+        icon: si:anthropic
+        alt-status-codes:
+        - 200
+        - 401
+      - title: llama-swap
+        url: https://llama.example.com
+        icon: di:ollama
+        alt-status-codes:
+        - 302
+  - size: full
+    widgets:
+    - type: custom-api
+      title: ''
+      cache: 20s
+      url: http://gpu-exporter:8000/health.json
+      template: "{{ if not (.JSON.Bool \"ok\") }}\n<div class=\"signal-ribbon signal-ribbon--unknown\">\n  <div class=\"signal-ribbon__state\"\
+        >Status unavailable</div>\n  <div class=\"signal-ribbon__meta\">{{ .JSON.String \"error\" }}</div>\n</div>\n{{ else\
+        \ if gt (.JSON.Int \"down\") 0 }}\n<div class=\"signal-ribbon signal-ribbon--down\">\n  <div class=\"signal-ribbon__state\"\
+        >{{ .JSON.String \"down_first\" }} down</div>\n  <div class=\"signal-ribbon__meta\">\n    <b>{{ .JSON.Int \"up\" }}/{{\
+        \ .JSON.Int \"total\" }}</b> up\n    &nbsp;·&nbsp; {{ .JSON.Int \"down\" }} failing\n    &nbsp;·&nbsp; <b>{{ printf\
+        \ \"%.2f\" (.JSON.Float \"uptime_24h\") }}%</b> / 24h\n  </div>\n</div>\n{{ else }}\n<div class=\"signal-ribbon\"\
+        >\n  <div class=\"signal-ribbon__state\">All systems nominal</div>\n  <div class=\"signal-ribbon__meta\">\n    <b>{{\
+        \ .JSON.Int \"up\" }}/{{ .JSON.Int \"total\" }}</b> up\n    &nbsp;·&nbsp; <b>{{ printf \"%.2f\" (.JSON.Float \"uptime_24h\"\
+        ) }}%</b> / 24h\n  </div>\n</div>\n{{ end }}"
+    - type: docker-containers
+      title: Containers
+      hide-by-default: false
+    - type: releases
+      title: Updates
+      token: ${GITHUB_TOKEN}
+      repositories:
+      - glanceapp/glance
+      - jc21/nginx-proxy-manager
+      - portainer/portainer
+      - henrygd/beszel
+      - willfarrell/autoheal
+      - apache/couchdb
+      - jellyfin/jellyfin
+      - seerr-team/seerr
+      - Radarr/Radarr
+      - Sonarr/Sonarr
+      - Prowlarr/Prowlarr
+      - bitmagnet-io/bitmagnet
+      - morpheus65535/bazarr
+      - HaveAGitGat/Tdarr
+      - aetaric/checkrr
+      - qbittorrent/qBittorrent
+      - jesec/flood
+      - sabnzbd/sabnzbd
+      - FlareSolverr/FlareSolverr
+      - ThePhaseless/Byparr
+      - thrnz/docker-wireguard-pia
+      - Stirling-Tools/Stirling-PDF
+      - dani-garcia/vaultwarden
+      - CorentinTh/it-tools
+  - size: small
+    widgets:
+    - type: monitor
+      title: Tools & Utilities
+      style: grid
+      sites:
+      - title: Gitea
+        url: https://git.example.com
+        icon: di:gitea
+      # No calagopus icon in dashboard-icons yet; pterodactyl is the closest
+      # match, calagopus being a reimplementation of it.
+      - title: Calagopus
+        url: https://panel.example.com
+        icon: di:pterodactyl
+      - title: Nginx Proxy Manager
+        url: https://npm.example.com
+        icon: di:nginx-proxy-manager
+      - title: Stirling PDF
+        url: https://stirling.example.com
+        icon: di:stirling-pdf
+      - title: Vaultwarden
+        url: https://vaultwarden.example.com
+        icon: di:bitwarden
+      - title: Tools
+        url: https://tools.example.com
+        icon: di:networking-toolbox
+      - title: Glance Dashboard
+        url: https://start.example.com
+        icon: di:glance
+    - type: bookmarks
+      groups:
+      - title: My Services
+        links:
+        - title: Jellyfin
+          url: https://jellyfin.example.com
+        - title: Seerr
+          url: https://seerr.example.com
+        - title: Gitea
+          url: https://git.example.com
+        - title: Calagopus
+          url: https://panel.example.com
+        - title: Uptime Kuma
+          url: https://kuma.example.com
+        - title: llama-swap
+          url: https://llama.example.com
+        - title: Beszel
+          url: https://beszel.example.com
+        - title: Dozzle
+          url: https://logs.example.com
+        - title: Stirling PDF
+          url: https://stirling.example.com
+        - title: IT-Tools
+          url: https://tools.example.com
+        - title: Portainer
+          url: https://portainer.example.com
+        - title: NPM
+          url: https://npm.example.com
+        - title: Vaultwarden
+          url: https://vaultwarden.example.com
+        - title: Glance
+          url: https://start.example.com
+- name: System
+  columns:
+  - size: small
+    widgets:
+    - type: server-stats
+      servers:
+      - type: local
+        name: docker-host
+    - type: custom-api
+      title: GPU · Intel Arc B580
+      cache: 15s
+      url: http://gpu-exporter:8000/gpu.json
+      template: "<div class=\"flex justify-between text-center\">\n  <div>\n    <div class=\"color-highlight size-h3\">{{\
+        \ if .JSON.Bool \"gpu_util_available\" }}{{ printf \"%.0f\" (.JSON.Float \"gpu_util_pct\") }}%{{ else }}n/a{{ end\
+        \ }}</div>\n    <div class=\"size-h6\">BUSY</div>\n  </div>\n  <div>\n    <div class=\"color-highlight size-h3\">{{\
+        \ printf \"%.0f\" (.JSON.Float \"temp_c\") }}°</div>\n    <div class=\"size-h6\">TEMP</div>\n  </div>\n  <div>\n \
+        \   <div class=\"color-highlight size-h3\">{{ printf \"%.1f\" (.JSON.Float \"mem_used_gb\") }}G</div>\n    <div class=\"\
+        size-h6\">VRAM</div>\n  </div>\n  <div>\n    <div class=\"color-highlight size-h3\">{{ printf \"%.0f\" (.JSON.Float\
+        \ \"clock_mhz\") }}</div>\n    <div class=\"size-h6\">MHZ</div>\n  </div>\n</div>\n<div class=\"size-h6 margin-top-10\"\
+        >\n  {{ if .JSON.Bool \"gpu_util_available\" }}decode {{ printf \"%.0f\" (.JSON.Float \"engines.video_decode\") }}%\
+        \ ·\n  render {{ printf \"%.0f\" (.JSON.Float \"engines.render\") }}% ·\n  {{ end }}fan {{ printf \"%.0f\" (.JSON.Float\
+        \ \"fan_rpm\") }}rpm\n</div>\n"
+    - type: releases
+      cache: 1d
+      token: ${GITHUB_TOKEN}
+      repositories:
+      - glanceapp/glance
+      - go-gitea/gitea
+      - immich-app/immich
+      - syncthing/syncthing
+  - size: full
+    widgets:
+    - type: custom-api
+      title: ''
+      cache: 20s
+      url: http://gpu-exporter:8000/health.json
+      template: "{{ if not (.JSON.Bool \"ok\") }}\n<div class=\"signal-ribbon signal-ribbon--unknown\">\n  <div class=\"signal-ribbon__state\"\
+        >Status unavailable</div>\n  <div class=\"signal-ribbon__meta\">{{ .JSON.String \"error\" }}</div>\n</div>\n{{ else\
+        \ if gt (.JSON.Int \"down\") 0 }}\n<div class=\"signal-ribbon signal-ribbon--down\">\n  <div class=\"signal-ribbon__state\"\
+        >{{ .JSON.String \"down_first\" }} down</div>\n  <div class=\"signal-ribbon__meta\">\n    <b>{{ .JSON.Int \"up\" }}/{{\
+        \ .JSON.Int \"total\" }}</b> up\n    &nbsp;·&nbsp; {{ .JSON.Int \"down\" }} failing\n    &nbsp;·&nbsp; <b>{{ printf\
+        \ \"%.2f\" (.JSON.Float \"uptime_24h\") }}%</b> / 24h\n  </div>\n</div>\n{{ else }}\n<div class=\"signal-ribbon\"\
+        >\n  <div class=\"signal-ribbon__state\">All systems nominal</div>\n  <div class=\"signal-ribbon__meta\">\n    <b>{{\
+        \ .JSON.Int \"up\" }}/{{ .JSON.Int \"total\" }}</b> up\n    &nbsp;·&nbsp; <b>{{ printf \"%.2f\" (.JSON.Float \"uptime_24h\"\
+        ) }}%</b> / 24h\n  </div>\n</div>\n{{ end }}"
+    - type: search
+      bangs:
+      - title: Google
+        shortcut: '!g'
+        url: https://www.google.com/search?q={QUERY}
+      - title: GitHub
+        shortcut: '!gh'
+        url: https://github.com/search?q={QUERY}
+      - title: Reddit
+        shortcut: '!r'
+        url: https://www.reddit.com/search?q={QUERY}
+      - title: YouTube
+        shortcut: '!yt'
+        url: https://www.youtube.com/results?search_query={QUERY}
+    - type: rss
+      title: Homelab & Self-Hosted News
+      limit: 15
+      collapse-after: 5
+      cache: 6h
+      feeds:
+      - url: https://selfh.st/rss/
+        title: selfh.st
+      - url: https://blog.linuxserver.io/rss/
+        title: LinuxServer.io
+      - url: https://www.servethehome.com/feed/
+        title: ServeTheHome
+      - url: https://blog.cloudflare.com/rss/
+        title: Cloudflare Blog
+      - url: https://github.blog/feed/
+        title: GitHub Blog
+    - type: group
+      widgets:
+      - type: reddit
+        subreddit: homelab
+        show-thumbnails: true
+      - type: reddit
+        subreddit: docker
+        show-thumbnails: true
+      - type: reddit
+        subreddit: linux
+        show-thumbnails: true
+      - type: reddit
+        subreddit: networking
+        show-thumbnails: true
+  - size: small
+    widgets:
+    - type: bookmarks
+      groups:
+      - title: Homelab Docs
+        links:
+        - title: Jellyfin Docs
+          url: https://jellyfin.org/docs/
+        - title: Sonarr Wiki
+          url: https://wiki.servarr.com/sonarr
+        - title: Radarr Wiki
+          url: https://wiki.servarr.com/radarr
+        - title: Prowlarr Wiki
+          url: https://wiki.servarr.com/prowlarr
+        - title: Docker Docs
+          url: https://docs.docker.com/
+        - title: Nginx Proxy Mgr
+          url: https://nginxproxymanager.com/guide/
+      - title: Tools
+        links:
+        - title: DNS Checker
+          url: https://dnschecker.org/
+        - title: SSL Test
+          url: https://www.ssllabs.com/ssltest/
+        - title: Down Detector
+          url: https://downdetector.com/
+        - title: Speedtest
+          url: https://www.speedtest.net/
+        - title: IP Checker
+          url: https://whatismyipaddress.com/
+        - title: Shodan
+          url: https://www.shodan.io/
