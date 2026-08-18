@@ -56,10 +56,12 @@ services:
       - proxy
 
   beszel-agent:
-    # Custom image: upstream agent + nvtop 3.3.2. The official
-    # henrygd/beszel-agent-intel ships only intel_gpu_top, which is i915-only
-    # and reports "no discrete/integrated i915 devices found" on this Arc
-    # Battlemage card. Beszel's nvtop collector handles it, but needs 3.3.2+.
+    # Local build: official agent binary + nvtop 3.3.2 + a device-name shim.
+    # Agent v0.18.8 gained a native Arc collector via nvtop, but the official
+    # image is distroless with no nvtop binary (their docs say to add it
+    # yourself), and the collector still drops a GPU whose device_name is
+    # null -- which is exactly what nvtop returns for this card. Verified on
+    # 0.18.8; see beszel-agent-gpu/Dockerfile.
     build: ./beszel-agent-gpu
     image: homelab/beszel-agent-gpu:latest
     container_name: beszel-agent

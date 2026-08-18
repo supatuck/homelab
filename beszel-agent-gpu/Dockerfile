@@ -40,9 +40,11 @@ COPY --from=henrygd/beszel-agent:latest /agent /agent
 COPY --from=nvtop /usr/local/bin/nvtop /usr/local/bin/nvtop
 
 # nvtop reports this card fine but returns device_name: null, and Beszel keys
-# GPUs by name -- its collector logs "GPU data=map[]" and shows nothing. The
-# shim fills the name in. /usr/local/sbin precedes /usr/local/bin on PATH, so
-# the agent resolves the shim while the real binary stays reachable.
+# GPUs by name -- its collector shows nothing without it. Verified STILL
+# required on agent v0.18.8 (its "Arc via nvtop" support does not handle the
+# null name). The shim fills the name in. /usr/local/sbin precedes
+# /usr/local/bin on PATH, so the agent resolves the shim while the real
+# binary stays reachable.
 COPY nvtop-shim.py /usr/local/sbin/nvtop
 RUN chmod +x /usr/local/sbin/nvtop
 
